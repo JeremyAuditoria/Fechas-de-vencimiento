@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#173f35">
+<meta name="description" content="Control local de fechas de vencimiento por UPC.">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>Control de vencimientos · Local</title>
 <style>
 :root{--g:#173f35;--g2:#23634f;--mint:#e8f3ed;--bg:#f4f7f5;--ink:#17231f;--muted:#65736b;--line:#dce5de;--amber:#9b5e00;--abg:#fff2d5;--red:#b42318;--rbg:#ffebe9;--white:#fff;--shadow:0 8px 25px #163d2b0b}
@@ -67,20 +70,34 @@
 </section>
 <div class="footer">Versión local de prueba · Los datos se almacenan en este navegador · Realiza respaldos regularmente.</div>
 </main>
-<div class="modalbg" id="scannerModal"><div class="modal"><div class="panelhead"><h3>Escanear código de barras</h3><button class="btn outline" id="closeScanner">✕</button></div><div class="scanview"><video id="video" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Preparando cámara…</div></div><p class="muted">El escáner usa ZXing y requiere conexión a internet para cargar el lector, además de permiso de cámara. En Windows, usa localhost; para usarlo desde un celular, se recomienda HTTPS.</p><button class="btn outline full" id="manualCode">Ingresar código manualmente</button></div></div>
+<div class="modalbg" id="scannerModal"><div class="modal"><div class="panelhead"><h3>Escanear código de barras</h3><button class="btn outline" id="closeScanner">✕</button></div><div class="scanview"><video id="video" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Preparando cámara…</div></div><p class="muted">Centra el código dentro del recuadro, usa la cámara trasera y evita reflejos. Para cargar el lector se necesita conexión a internet; esta página está publicada mediante HTTPS.</p><button class="btn outline full" id="manualCode">Ingresar código manualmente</button></div></div>
 <div class="toast" id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/@zxing/browser@0.2.1"></script>
 <script>
 (()=> {
 const $=id=>document.getElementById(id), KEYS={catalog:'expiryLocal_catalog_v3',records:'expiryLocal_records_v3'};
-let catalog=read(KEYS.catalog,[]),records=read(KEYS.records,[]),stream=null,scanning=false,detector=null,toastTimer;
-function read(k,d){try{return JSON.parse(localStorage.getItem(k)||'null')||d}catch{return d}}
-function write(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch{toast('No se pudo guardar. Exporta un respaldo y libera espacio en el navegador.');return false}}
+let catalog=[],records=[],stream=null,scanning=false,detector=null,toastTimer,zxingReader=null,zxingControls=null,nativeBusy=false,dbPromise,scannerFallbackTimer=null;
+function readLocal(k,d){try{const raw=localStorage.getItem(k);return raw===null?d:JSON.parse(raw)}catch{return d}}
+function openDatabase(){return new Promise((resolve,reject)=>{if(!('indexedDB' in window)){reject(new Error('IndexedDB no está disponible'));return}const req=indexedDB.open('ControlVencimientosDB',1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains('data'))db.createObjectStore('data',{keyPath:'key'})};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error||new Error('No se pudo abrir IndexedDB'))})}
+function dbGet(key){return dbPromise.then(db=>new Promise((resolve,reject)=>{const tx=db.transaction('data','readonly'),req=tx.objectStore('data').get(key);req.onsuccess=()=>resolve(req.result?req.result.value:undefined);req.onerror=()=>reject(req.error)}))}
+function dbPut(key,value){return dbPromise.then(db=>new Promise((resolve,reject)=>{const tx=db.transaction('data','readwrite');tx.objectStore('data').put({key,value});tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error||new Error('No se pudo guardar'));tx.onabort=()=>reject(tx.error||new Error('Guardado cancelado'))}))}
+function write(k,v){dbPut(k,v).catch(err=>{console.error(err);toast('No se pudo guardar en el almacenamiento del teléfono. Exporta un respaldo y revisa el espacio disponible.')});return true}
+async function initializeStorage(){
+ dbPromise=openDatabase();
+ const oldCatalog=readLocal(KEYS.catalog,[]),oldRecords=readLocal(KEYS.records,[]);
+ try{
+  const savedCatalog=await dbGet(KEYS.catalog),savedRecords=await dbGet(KEYS.records);
+  if(Array.isArray(savedCatalog))catalog=savedCatalog;else{catalog=Array.isArray(oldCatalog)?oldCatalog:[];await dbPut(KEYS.catalog,catalog)}
+  if(Array.isArray(savedRecords))records=savedRecords;else{records=Array.isArray(oldRecords)?oldRecords:[];await dbPut(KEYS.records,records)}
+  try{localStorage.removeItem(KEYS.catalog);localStorage.removeItem(KEYS.records)}catch{}
+  render();renderCatalog();
+ }catch(err){console.error(err);catalog=Array.isArray(oldCatalog)?oldCatalog:[];records=Array.isArray(oldRecords)?oldRecords:[];render();renderCatalog('No se pudo abrir IndexedDB; realiza un respaldo y prueba en un navegador actualizado.')}
+}
 function toast(s){const t=$('toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3000)}
 function norm(s){return String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'')}
 function findHeader(headers,aliases){return headers.find(h=>aliases.includes(norm(h)))}
-function lookup(code){return catalog.find(p=>String(p.upc).trim()===String(code).trim())}
+function lookup(code){const s=String(code??'').trim();let p=catalog.find(p=>String(p.upc).trim()===s);if(p)return p;if(/^0\d{12}$/.test(s)){const short=s.slice(1);p=catalog.find(p=>String(p.upc).trim()===short);if(p)return p}if(/^\d{12}$/.test(s)){const ean='0'+s;p=catalog.find(p=>String(p.upc).trim()===ean);if(p)return p}return undefined}
 function day0(){const d=new Date();d.setHours(0,0,0,0);return d}
 function days(s){const a=s.split('-').map(Number);return Math.round((new Date(a[0],a[1]-1,a[2])-day0())/86400000)}
 function state(r){const d=days(r.expiry);return d<0?'expired':d<=30?'soon':'ok'}
@@ -118,48 +135,68 @@ $('downloadTemplate').addEventListener('click',makeTemplate);
 $('importExcel').addEventListener('click',async()=>{const file=$('xlsxFile').files[0];if(!file){toast('Selecciona un archivo Excel.');return}if(!window.XLSX){toast('No se pudo cargar el lector Excel. Conéctate a internet e inténtalo otra vez.');return}try{const wb=XLSX.read(await file.arrayBuffer(),{type:'array',raw:true});const ws=wb.Sheets[wb.SheetNames[0]],rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});if(!rows.length){toast('La primera hoja está vacía.');return}const hs=Object.keys(rows[0]),hU=findHeader(hs,['upc']),hD=findHeader(hs,['descripcion']),hC=findHeader(hs,['costo']),hDept=findHeader(hs,['departamento']);if(!hU||!hD||!hC||!hDept){toast('Los encabezados deben ser UPC, DESCRIPCIÓN, COSTO y DEPARTAMENTO.');$('catalogStatus').textContent='Encabezados detectados: '+hs.join(', ');return}const map=new Map();let skipped=0,dups=0;for(const row of rows){const upc=String(row[hU]??'').trim(),description=String(row[hD]??'').trim(),department=String(row[hDept]??'').trim(),raw=String(row[hC]??'').trim();if(!upc||!description||!department){skipped++;continue}const cost=raw===''?null:Number(raw.replace(/[Q$,\s]/g,''));if(raw!==''&&!Number.isFinite(cost)){skipped++;continue}if(map.has(upc))dups++;map.set(upc,{upc,description,cost,department})}if(!map.size){toast('No se encontraron filas válidas.');return}if(!confirm('Se importarán '+map.size+' UPC únicos. Se reemplazará el catálogo actual, pero no se borrarán tus registros de vencimiento. ¿Continuar?'))return;catalog=Array.from(map.values());if(write(KEYS.catalog,catalog)){renderCatalog('Importación terminada. Filas omitidas: '+skipped+'. Duplicados UPC detectados: '+dups+'.');toast('Catálogo actualizado.')} }catch(err){toast('No se pudo leer el Excel. Verifica que el archivo sea válido.')}});
 $('backupBtn').addEventListener('click',()=>downloadBlob(new Blob([JSON.stringify({version:3,exportedAt:new Date().toISOString(),catalog,records},null,2)],{type:'application/json'}),'respaldo_control_vencimientos.json'));
 $('restoreFile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());if(!Array.isArray(d.catalog)||!Array.isArray(d.records))throw Error('Formato');if(!confirm('Este respaldo reemplazará el catálogo y los registros actuales. ¿Continuar?'))return;catalog=d.catalog;records=d.records;write(KEYS.catalog,catalog);write(KEYS.records,records);render();renderCatalog('Respaldo restaurado.');toast('Respaldo restaurado.')}catch{toast('El archivo no parece ser un respaldo válido.')}e.target.value=''});
-// Scanner support
+// Scanner: primero intenta BarcodeDetector nativo y luego ZXing con cámara trasera.
 $('scanBtn').addEventListener('click',openScanner);$('closeScanner').addEventListener('click',closeScanner);$('manualCode').addEventListener('click',()=>{closeScanner();$('upc').focus()});
 async function openScanner(){
- $('scannerModal').classList.add('show');$('scanMsg').textContent='Preparando cámara…';$('scanMsg').classList.remove('hidden');
- if(!navigator.mediaDevices?.getUserMedia){$('scanMsg').textContent='No se puede acceder a la cámara desde esta dirección. Abre la app en http://localhost:8000 o mediante HTTPS.';return}
+ closeCameraResources();
+ $('scannerModal').classList.add('show');$('scanMsg').textContent='Preparando cámara trasera…';$('scanMsg').classList.remove('hidden');
+ if(!navigator.mediaDevices?.getUserMedia){$('scanMsg').textContent='Este navegador no permite usar la cámara. Abre la aplicación desde su dirección HTTPS y revisa los permisos.';return}
  scanning=true;
- // Prioriza ZXing, que admite más formatos de códigos de barras que BarcodeDetector en varios navegadores.
- if(window.ZXingBrowser&&window.ZXingBrowser.BrowserMultiFormatReader){
+ // En navegadores compatibles, BarcodeDetector suele dar buena lectura de UPC/EAN.
+ if('BarcodeDetector' in window && typeof BarcodeDetector.getSupportedFormats==='function'){
   try{
-   zxingReader=new ZXingBrowser.BrowserMultiFormatReader();
-   $('scanMsg').textContent='Solicitando acceso a la cámara…';
-   const controls=await zxingReader.decodeFromVideoDevice(undefined,$('video'),(result,err)=>{
-    if(result&&scanning)onScanned(result.getText());
-   });
-   if(scanning){zxingControls=controls;$('scanMsg').classList.add('hidden')}
-   else if(controls&&controls.stop)controls.stop();
-   return;
-  }catch(err){
-   scanning=false;console.error('Error al iniciar ZXing:',err);
-   $('scanMsg').classList.remove('hidden');
-   const messages={NotAllowedError:'Permiso de cámara denegado. Autoriza la cámara para este sitio y vuelve a intentarlo.',NotFoundError:'No se encontró una cámara conectada.',NotReadableError:'La cámara está ocupada por otra aplicación. Ciérrala y vuelve a intentar.',OverconstrainedError:'No se encontró una cámara compatible.'};
-   $('scanMsg').textContent=messages[err.name]||('No se pudo iniciar el escáner ('+(err.name||'error desconocido')+'). Prueba desde localhost o HTTPS y revisa la cámara.');
-   return;
-  }
+   const wanted=['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'];
+   const supported=await BarcodeDetector.getSupportedFormats();
+   const formats=wanted.filter(f=>supported.includes(f));
+   if(formats.length){
+    detector=new BarcodeDetector({formats});
+    stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
+    const video=$('video');video.setAttribute('playsinline','');video.muted=true;video.srcObject=stream;await video.play();
+    $('scanMsg').textContent='Buscando código… centra las barras dentro del recuadro. Si no lo lee, probará otro lector automáticamente.';$('scanMsg').classList.remove('hidden');
+    scanLoopNative();
+    scannerFallbackTimer=setTimeout(()=>{if(scanning&&detector){console.info('Cambiando a ZXing porque el lector nativo no detectó el código.');if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}detector=null;$('video').srcObject=null;startZXingReader()}},5000);
+    return;
+   }
+  }catch(err){console.warn('BarcodeDetector no pudo iniciar; se probará ZXing:',err);if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}detector=null}
  }
- // Respaldo nativo si ZXing no pudo cargarse desde el CDN.
- if(!('BarcodeDetector' in window)){$('scanMsg').textContent='No se cargó el lector de códigos. Verifica tu conexión a internet y vuelve a abrir la aplicación.';scanning=false;return}
+ // Safari/iPhone y navegadores sin BarcodeDetector: ZXing con cámara trasera solicitada explícitamente.
+ await startZXingReader();
+}
+async function startZXingReader(){
+ if(!scanning)return;
+ if(scannerFallbackTimer){clearTimeout(scannerFallbackTimer);scannerFallbackTimer=null}
  try{
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
-  const video=$('video');video.srcObject=stream;await video.play();
-  detector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar']});
-  $('scanMsg').classList.add('hidden');scanning=true;scanLoopNative();
+  if(!window.ZXingBrowser||!window.ZXingBrowser.BrowserMultiFormatReader)throw new Error('No se pudo cargar ZXing. Comprueba tu conexión a internet y vuelve a intentarlo.');
+  zxingReader=new ZXingBrowser.BrowserMultiFormatReader();
+  $('scanMsg').textContent='Iniciando lector alternativo… centra las barras dentro del recuadro.';$('scanMsg').classList.remove('hidden');
+  const constraints={audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}};
+  const controls=await zxingReader.decodeFromConstraints(constraints,$('video'),(result,err)=>{
+   if(result&&scanning){const value=result.getText();if(value)onScanned(value)}
+   if(err&&scanning&&err.name!=='NotFoundException'&&err.name!=='ChecksumException'&&err.name!=='FormatException')console.debug('ZXing sigue buscando:',err.name||err.message||err);
+  });
+  if(scanning){zxingControls=controls;$('scanMsg').classList.add('hidden')}else if(controls?.stop)controls.stop();
  }catch(err){
-  scanning=false;$('scanMsg').classList.remove('hidden');
-  $('scanMsg').textContent=err.name==='NotAllowedError'?'Permiso de cámara denegado. Revisa los permisos del sitio.':err.name==='NotFoundError'?'No se encontró una cámara disponible.':'No se pudo abrir la cámara ('+(err.name||'error desconocido')+'). Prueba desde localhost o HTTPS.';
+  console.error('No se pudo iniciar ZXing:',err);scanning=false;$('scanMsg').classList.remove('hidden');
+  $('scanMsg').textContent=err.message||'No se pudo iniciar el lector. Revisa la conexión, los permisos y vuelve a intentarlo.';
  }
 }
-async function scanLoopNative(){if(!scanning||!detector)return;try{const v=$('video');if(v.readyState>=2){const found=await detector.detect(v);if(found.length&&found[0].rawValue){onScanned(found[0].rawValue);return}}}catch(e){}if(scanning)requestAnimationFrame(scanLoopNative)}
-function onScanned(value){$('upc').value=String(value).trim();closeScanner();searchUPC();$('expiry').focus();toast('UPC escaneado.')}
-function closeScanner(){scanning=false;try{if(zxingControls&&zxingControls.stop)zxingControls.stop()}catch(e){}zxingControls=null;try{if(zxingReader&&zxingReader.reset)zxingReader.reset()}catch(e){}zxingReader=null;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}$('video').srcObject=null;$('scannerModal').classList.remove('show')}
+async function scanLoopNative(){
+ if(!scanning||!detector)return;
+ if(!nativeBusy){nativeBusy=true;try{const video=$('video');if(video.readyState>=2){const found=await detector.detect(video);if(found.length&&found[0].rawValue){onScanned(found[0].rawValue);return}}}catch(err){console.debug('Aún no se detecta un código:',err)}finally{nativeBusy=false}}
+ if(scanning)requestAnimationFrame(scanLoopNative);
+}
+function onScanned(value){if(!scanning)return;const code=String(value??'').trim();if(!code)return;$('upc').value=code;closeScanner();searchUPC();$('expiry').focus();if($('lookup').classList.contains('no'))toast('Código leído ('+code+'), pero no aparece en el catálogo. Revisa si el UPC del Excel tiene ceros iniciales.');else toast('Código leído correctamente.')}
+function closeCameraResources(){
+ scanning=false;nativeBusy=false;if(scannerFallbackTimer){clearTimeout(scannerFallbackTimer);scannerFallbackTimer=null}
+ try{if(zxingControls?.stop)zxingControls.stop()}catch{}zxingControls=null;
+ try{if(zxingReader?.reset)zxingReader.reset()}catch{}zxingReader=null;
+ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+ detector=null;const video=$('video');if(video){try{video.pause()}catch{}video.srcObject=null;video.removeAttribute('src')}
+}
+function closeScanner(){closeCameraResources();$('scannerModal').classList.remove('show')}
 $('scannerModal').addEventListener('click',e=>{if(e.target===$('scannerModal'))closeScanner()});
-render();renderCatalog();
+initializeStorage();
+if('serviceWorker' in navigator && location.protocol==='https:'){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(err=>console.warn('PWA no pudo instalarse:',err)))}
 })();
 </script>
 </body>
