@@ -1,7 +1,8 @@
-const CACHE_NAME = 'control-vencimientos-v5';
+const CACHE_NAME = 'control-vencimientos-central-v9';
 const APP_SHELL = [
   './',
   './index.html',
+  './usuario.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png'
@@ -54,7 +55,8 @@ self.addEventListener('fetch', event => {
       try {
         const response = await fetch(request);
         const cache = await caches.open(CACHE_NAME);
-        cache.put('./index.html', response.clone()).catch(() => {});
+        cache.put('./index.html',
+  './usuario.html', response.clone()).catch(() => {});
         return response;
       } catch (error) {
         return (await caches.match('./index.html')) || (await caches.match('./'));
