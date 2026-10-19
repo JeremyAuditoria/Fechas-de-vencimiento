@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Control de vencimientos",
   "short_name": "Vencimientos",
-  "description": "Control local de productos, lotes y fechas de vencimiento por UPC.",
+  "description": "Control de productos, lotes y fechas de vencimiento por UPC con catálogo central.",
   "lang": "es-GT",
   "start_url": "./index.html",
   "scope": "./",
