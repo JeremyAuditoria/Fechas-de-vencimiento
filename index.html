@@ -161,8 +161,8 @@ $('exportRecords').addEventListener('click',exportRecordsXlsx);
 const deleteAllButton=$('deleteAllRecords');
 if(deleteAllButton)deleteAllButton.addEventListener('click',()=>{
   if(!records.length){toast('No hay registros para eliminar.');return}
-  const confirmation=prompt('Esta acción eliminará TODOS los registros de vencimiento de este dispositivo. Para confirmar, escribe ELIMINAR.');
-  if(confirmation!=='ELIMINAR'){toast('Operación cancelada.');return}
+  const confirmation=confirm('¿Estás seguro de que deseas eliminar TODOS los registros de vencimiento de este dispositivo? Esta acción no se puede deshacer.');
+  if(!confirmation){toast('Operación cancelada.');return}
   records=[];
   write(KEYS.records,records);
   resetForm();
