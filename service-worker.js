@@ -1,7 +1,7 @@
 /* Service worker PWA - Control de vencimientos.
    Estrategia: navegación network-first para recibir actualizaciones;
    archivos estáticos cache-first. No modifica localStorage ni IndexedDB. */
-const CACHE_NAME = 'control-vencimientos-pwa-v14';
+const CACHE_NAME = 'control-vencimientos-pwa-v15';
 const APP_SHELL = [
   './',
   './index.html',

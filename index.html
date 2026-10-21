@@ -82,5 +82,17 @@ button{width:100%;border:0;border-radius:10px;padding:13px;margin-top:18px;backg
  restore();
 })();
 </script>
+
+<script>
+/* Registro PWA desde la página inicial: necesario para que el inicio de sesión
+   también quede bajo el alcance del service worker. */
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js', { scope: './' })
+      .catch(err => console.warn('No se pudo registrar la aplicación instalable:', err));
+  });
+}
+</script>
+
 </body>
 </html>
