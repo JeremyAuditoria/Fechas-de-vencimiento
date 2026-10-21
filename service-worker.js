@@ -1,4 +1,4 @@
-const CACHE_NAME = 'control-vencimientos-central-v11';
+const CACHE_NAME = 'control-vencimientos-central-v13';
 const APP_SHELL = [
   './',
   './index.html',

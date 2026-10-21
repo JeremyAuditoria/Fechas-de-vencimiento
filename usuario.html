@@ -26,6 +26,7 @@
 @media(max-width:600px){.dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.bar-row{grid-template-columns:90px 1fr 28px;gap:6px}}
 
  .header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.header-actions .btn{margin:0}.modalbg{z-index:60!important}
+.camera-help{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--mint)}.camera-help p{margin:4px 0 10px}.camera-help .btn{margin-top:8px}.camera-help.hidden{display:none}
 </style>
 </head>
 <body>
@@ -101,7 +102,7 @@
 <div class="footer">Catálogo de productos centralizado · Registros de vencimiento guardados en este dispositivo · Realiza respaldos regularmente.</div>
 </main>
 <div class="modalbg show" id="loginModal" style="z-index:40"><div class="modal"><div class="panelhead"><h3>Acceso a Control de vencimientos</h3></div><p class="muted">Inicia sesión con tu cuenta autorizada para consultar el catálogo central. Tus registros de vencimiento seguirán guardados en este dispositivo.</p><form id="loginForm"><div class="field"><label for="loginEmail">Correo electrónico</label><input id="loginEmail" type="email" autocomplete="username" required></div><div class="field"><label for="loginPassword">Contraseña</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn primary full" id="loginButton" type="submit">Iniciar sesión</button><p class="note" id="loginMessage">Necesitas una cuenta creada en el proyecto Supabase.</p></form></div></div>
-<div class="modalbg" id="scannerModal"><div class="modal"><div class="panelhead"><h3>Escanear código de barras</h3><button class="btn outline" id="closeScanner">✕</button></div><div class="scanview"><video id="video" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Preparando cámara…</div></div><p class="muted">Centra el código dentro del recuadro, usa la cámara trasera y evita reflejos. Para cargar el lector se necesita conexión a internet; esta página está publicada mediante HTTPS.</p><button class="btn outline full" id="manualCode">Ingresar código manualmente</button></div></div>
+<div class="modalbg" id="scannerModal"><div class="modal"><div class="panelhead"><h3>Escanear código de barras</h3><button class="btn outline" id="closeScanner">✕</button></div><div class="scanview"><video id="video" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Preparando cámara…</div></div><p class="muted">Centra el código dentro del recuadro, usa la cámara trasera y evita reflejos. Para cargar el lector se necesita conexión a internet; esta página está publicada mediante HTTPS.</p><div id="cameraHelp" class="camera-help hidden"><p id="cameraHelpText"></p><button class="btn primary full" id="retryCamera" type="button">Volver a solicitar permiso y abrir cámara</button><p class="muted">Si ya se denegó el permiso, el navegador puede bloquear nuevas solicitudes. En ese caso, habilita Cámara para este sitio desde el icono junto a la dirección o en los ajustes del navegador y vuelve a intentarlo.</p></div><button class="btn outline full" id="manualCode">Ingresar código manualmente</button></div></div>
 <div class="modalbg" id="nameModal" role="dialog" aria-modal="true" aria-labelledby="nameModalTitle" style="z-index:60"><div class="modal"><div class="panelhead"><h3 id="nameModalTitle">Identificación del usuario</h3></div><p class="muted">Antes de continuar, escribe tu nombre. Este nombre aparecerá en la pantalla principal y en los archivos Excel que exportes.</p><form id="nameForm"><div class="field"><label for="firstName">Nombre</label><input id="firstName" type="text" autocomplete="given-name" maxlength="80" required></div><button class="btn primary full" id="confirmNameButton" type="submit">Confirmar nombre</button><p class="note" id="nameMessage">El nombre se guarda en este dispositivo para tu cuenta. Puedes cambiarlo cuando lo necesites con «Editar nombre».</p></form></div></div>
 <div class="toast" id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
@@ -298,30 +299,67 @@ $('backupBtn').addEventListener('click',()=>downloadBlob(new Blob([JSON.stringif
 $('restoreFile').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());if(!Array.isArray(d.catalog)||!Array.isArray(d.records))throw Error('Formato');if(!confirm('Este respaldo reemplazará el catálogo y los registros actuales. ¿Continuar?'))return;catalog=d.catalog;records=d.records;write(KEYS.catalog,catalog);write(KEYS.records,records);render();toast('Respaldo restaurado.');if(currentSession)loadCentralCatalog()}catch{toast('El archivo no parece ser un respaldo válido.')}e.target.value=''});
 // Scanner: primero intenta BarcodeDetector nativo y luego ZXing con cámara trasera.
 $('scanBtn').addEventListener('click',openScanner);$('closeScanner').addEventListener('click',closeScanner);$('manualCode').addEventListener('click',()=>{closeScanner();$('upc').focus()});
+function cameraErrorMessage(err){
+ const name=err?.name||'';
+ if(name==='NotAllowedError'||name==='PermissionDeniedError'||name==='SecurityError'){
+  return 'El navegador o el teléfono bloqueó el permiso de cámara. Para corregirlo: 1) abre los permisos del sitio desde el icono junto a la dirección; 2) cambia Cámara a Permitir; 3) recarga la página y pulsa Escanear otra vez. En iPhone, usa Safari y revisa Ajustes > Safari > Cámara. En Android, revisa el permiso de Cámara del navegador en Ajustes del teléfono.';
+ }
+ if(name==='NotFoundError'||name==='DevicesNotFoundError')return 'No se encontró una cámara disponible. Comprueba que el teléfono tenga cámara y que ninguna otra aplicación la esté usando.';
+ if(name==='NotReadableError'||name==='TrackStartError')return 'La cámara está ocupada o el sistema no permite abrirla. Cierra otras aplicaciones que usen la cámara y vuelve a intentarlo.';
+ if(name==='OverconstrainedError'||name==='ConstraintNotSatisfiedError')return 'No se pudo abrir la cámara trasera con esa configuración. Se intentará usar otra cámara disponible.';
+ if(!navigator.mediaDevices?.getUserMedia)return 'Este navegador no permite acceder a la cámara. Abre la aplicación con su dirección HTTPS en Safari o Chrome actualizado, no desde una vista previa dentro de otra aplicación.';
+ return err?.message||'No se pudo abrir la cámara. Revisa los permisos del navegador y vuelve a intentarlo.';
+}
+function showCameraHelp(message){
+ const box=$('cameraHelp'),txt=$('cameraHelpText');
+ if(txt)txt.textContent=message;
+ if(box)box.classList.remove('hidden');
+}
 async function openScanner(){
  closeCameraResources();
- $('scannerModal').classList.add('show');$('scanMsg').textContent='Preparando cámara trasera…';$('scanMsg').classList.remove('hidden');
- if(!navigator.mediaDevices?.getUserMedia){$('scanMsg').textContent='Este navegador no permite usar la cámara. Abre la aplicación desde su dirección HTTPS y revisa los permisos.';return}
- scanning=true;
- // En navegadores compatibles, BarcodeDetector suele dar buena lectura de UPC/EAN.
- if('BarcodeDetector' in window && typeof BarcodeDetector.getSupportedFormats==='function'){
-  try{
-   const wanted=['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'];
-   const supported=await BarcodeDetector.getSupportedFormats();
-   const formats=wanted.filter(f=>supported.includes(f));
-   if(formats.length){
-    detector=new BarcodeDetector({formats});
-    stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
-    const video=$('video');video.setAttribute('playsinline','');video.muted=true;video.srcObject=stream;await video.play();
-    $('scanMsg').textContent='Buscando código… centra las barras dentro del recuadro. Si no lo lee, probará otro lector automáticamente.';$('scanMsg').classList.remove('hidden');
-    scanLoopNative();
-    scannerFallbackTimer=setTimeout(()=>{if(scanning&&detector){console.info('Cambiando a ZXing porque el lector nativo no detectó el código.');if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}detector=null;$('video').srcObject=null;startZXingReader()}},5000);
-    return;
-   }
-  }catch(err){console.warn('BarcodeDetector no pudo iniciar; se probará ZXing:',err);if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}detector=null}
+ $('scannerModal').classList.add('show');
+ $('cameraHelp').classList.add('hidden');
+ $('scanMsg').textContent='Solicitando permiso para usar la cámara…';
+ $('scanMsg').classList.remove('hidden');
+ if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){
+  showCameraHelp(cameraErrorMessage({name:'SecurityError'}));return;
  }
- // Safari/iPhone y navegadores sin BarcodeDetector: ZXing con cámara trasera solicitada explícitamente.
- await startZXingReader();
+ scanning=true;
+ try{
+  // La solicitud se inicia directamente tras pulsar el botón Escanear.
+  // El navegador mostrará su diálogo si aún necesita autorización.
+  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'}}});
+  const video=$('video');video.setAttribute('playsinline','');video.muted=true;video.srcObject=stream;
+  try{await video.play()}catch(playErr){console.warn('Video.play no pudo iniciarse inmediatamente:',playErr)}
+  if('BarcodeDetector' in window && typeof BarcodeDetector.getSupportedFormats==='function'){
+   try{
+    const wanted=['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'];
+    const supported=await BarcodeDetector.getSupportedFormats();
+    const formats=wanted.filter(f=>supported.includes(f));
+    if(formats.length){
+     detector=new BarcodeDetector({formats});
+     $('scanMsg').textContent='Buscando código… centra las barras dentro del recuadro.';
+     scanLoopNative();
+     scannerFallbackTimer=setTimeout(()=>{
+      if(scanning&&detector){
+       detector=null;
+       if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+       $('video').srcObject=null;
+       startZXingReader();
+      }
+     },5000);
+     return;
+    }
+   }catch(err){console.warn('Lector nativo no disponible; se usará ZXing:',err)}
+  }
+  // ZXing reutiliza el permiso ya concedido en esta apertura.
+  await startZXingReader();
+ }catch(err){
+  console.error('No se pudo solicitar permiso de cámara:',err);
+  scanning=false;closeCameraResources();
+  $('scanMsg').textContent='No se pudo iniciar la cámara.';
+  showCameraHelp(cameraErrorMessage(err));
+ }
 }
 async function startZXingReader(){
  if(!scanning)return;
@@ -330,15 +368,24 @@ async function startZXingReader(){
   if(!window.ZXingBrowser||!window.ZXingBrowser.BrowserMultiFormatReader)throw new Error('No se pudo cargar ZXing. Comprueba tu conexión a internet y vuelve a intentarlo.');
   zxingReader=new ZXingBrowser.BrowserMultiFormatReader();
   $('scanMsg').textContent='Iniciando lector alternativo… centra las barras dentro del recuadro.';$('scanMsg').classList.remove('hidden');
-  const constraints={audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}};
-  const controls=await zxingReader.decodeFromConstraints(constraints,$('video'),(result,err)=>{
+  if(!stream){
+   try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'}}})}
+   catch(err){
+    if(err?.name==='NotAllowedError'||err?.name==='PermissionDeniedError')throw err;
+    stream=await navigator.mediaDevices.getUserMedia({audio:false,video:true});
+   }
+  }
+  const video=$('video');video.setAttribute('playsinline','');video.muted=true;video.srcObject=stream;
+  try{await video.play()}catch(playErr){console.warn('No se pudo reproducir el video inmediatamente:',playErr)}
+  const controls=await zxingReader.decodeFromStream(stream,video,(result,err)=>{
    if(result&&scanning){const value=result.getText();if(value)onScanned(value)}
    if(err&&scanning&&err.name!=='NotFoundException'&&err.name!=='ChecksumException'&&err.name!=='FormatException')console.debug('ZXing sigue buscando:',err.name||err.message||err);
   });
   if(scanning){zxingControls=controls;$('scanMsg').classList.add('hidden')}else if(controls?.stop)controls.stop();
  }catch(err){
-  console.error('No se pudo iniciar ZXing:',err);scanning=false;$('scanMsg').classList.remove('hidden');
-  $('scanMsg').textContent=err.message||'No se pudo iniciar el lector. Revisa la conexión, los permisos y vuelve a intentarlo.';
+  console.error('No se pudo iniciar ZXing:',err);scanning=false;closeCameraResources();$('scanMsg').classList.remove('hidden');
+  $('scanMsg').textContent='No se pudo iniciar el lector.';
+  showCameraHelp(cameraErrorMessage(err));
  }
 }
 async function scanLoopNative(){
@@ -355,6 +402,7 @@ function closeCameraResources(){
  detector=null;const video=$('video');if(video){try{video.pause()}catch{}video.srcObject=null;video.removeAttribute('src')}
 }
 function closeScanner(){closeCameraResources();$('scannerModal').classList.remove('show')}
+$('retryCamera').addEventListener('click',openScanner);
 $('scannerModal').addEventListener('click',e=>{if(e.target===$('scannerModal'))closeScanner()});
 initializeStorage().then(setupSupabase);
 if('serviceWorker' in navigator && location.protocol==='https:'){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(err=>console.warn('PWA no pudo instalarse:',err)))}
