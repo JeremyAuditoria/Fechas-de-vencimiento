@@ -1,11 +1,11 @@
 {
-  "id": "./",
+  "id": "https://jeremyauditoria.github.io/Fechas-de-vencimiento/",
   "name": "Control de vencimientos",
   "short_name": "Vencimientos",
   "description": "Control de productos y fechas de vencimiento.",
   "lang": "es-GT",
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "https://jeremyauditoria.github.io/Fechas-de-vencimiento/",
+  "scope": "https://jeremyauditoria.github.io/Fechas-de-vencimiento/",
   "display": "standalone",
   "display_override": [
     "standalone",
